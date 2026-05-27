@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>GeminiBoard – Collaborative AI Whiteboard</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; width: 100%; }
+    #root { height: 100vh; width: 100vw; display: flex; }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    input[type=range] { -webkit-appearance: none; width: 100%; height: 4px; border-radius: 2px; background: #334155; outline: none; cursor: pointer; }
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #a855f7; cursor: pointer; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // ================================================================
+    // CONFIGURATION — paste your free Gemini key here OR enter it
+    // in the sidebar. Get one free at: aistudio.google.com
+    // ================================================================
+    const HARDCODED_API_KEY = '';
+
+    // ================================================================
+    // INLINE SVG ICONS
+    // ================================================================
+    const Ico = ({ paths, size = 16, className = '', style = {} }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24"
+        fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+        strokeLinejoin="round" className={className} style={style}>
+        {paths.map((p, i) => <path key={i} d={p} />)}
+      </svg>
+    );
+    const Square       = p => <Ico {...p} paths={['M3 3h18v18H3z']} />;
+    const Circle       = p => <Ico {...p} paths={['M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20']} />;
+    const Minus        = p => <Ico {...p} paths={['M5 12h14']} />;
+    const ArrowRight   = p => <Ico {...p} paths={['M5 12h14','M12 5l7 7-7 7']} />;
+    const Type         = p => <Ico {...p} paths={['M4 7V4h16v3','M9 20h6','M12 4v16']} />;
+    const Edit3        = p => <Ico {...p} paths={['M12 20h9','M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z']} />;
+    const Eraser       = p => <Ico {...p} paths={['M20 20H7L3 16l10-10 7 7-4 4','M6 11l7 7']} />;
+    const Hand         = p => <Ico {...p} paths={['M18 11V6a2 2 0 0 0-4 0v0m0 0V3a2 2 0 0 0-4 0v9m0-8a2 2 0 0 0-4 0v8a6 6 0 0 0 6 6h2a6 6 0 0 0 6-6v-5a2 2 0 0 0-4 0z']} />;
+    const MousePointer = p => <Ico {...p} paths={['M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z','M13 13l6 6']} />;
+    const Sparkles     = p => <Ico {...p} paths={['M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z','M5 17l.5 1.5L7 19l-1.5.5L5 21l-.5-1.5L3 19l1.5-.5z','M19 5l.5 1.5L21 7l-1.5.5L19 9l-.5-1.5L17 7l1.5-.5z']} />;
+    const Share2       = p => <Ico {...p} paths={['M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8','M16 6l-4-4-4 4','M12 2v13']} />;
+    const Trash2       = p => <Ico {...p} paths={['M3 6h18','M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2','M10 11v6','M14 11v6']} />;
+    const Download     = p => <Ico {...p} paths={['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4','M7 10l5 5 5-5','M12 15V3']} />;
+    const ZoomIn       = p => <Ico {...p} paths={['M11 5a6 6 0 1 0 0 12A6 6 0 0 0 11 5z','M21 21l-4.35-4.35','M11 8v6','M8 11h6']} />;
+    const ZoomOut      = p => <Ico {...p} paths={['M11 5a6 6 0 1 0 0 12A6 6 0 0 0 11 5z','M21 21l-4.35-4.35','M8 11h6']} />;
+    const RotateCcw    = p => <Ico {...p} paths={['M3 2v6h6','M3 13a9 9 0 1 0 3-7.7L3 8']} />;
+    const FileText     = p => <Ico {...p} paths={['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z','M14 2v6h6','M16 13H8','M16 17H8','M10 9H8']} />;
+    const Users        = p => <Ico {...p} paths={['M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2','M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8','M23 21v-2a4 4 0 0 0-3-3.87','M16 3.13a4 4 0 0 1 0 7.75']} />;
+    const Check        = p => <Ico {...p} paths={['M20 6L9 17l-5-5']} />;
+    const Moon         = p => <Ico {...p} paths={['M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z']} />;
+    const Sun          = p => <Ico {...p} paths={['M12 1v2','M12 21v2','M4.22 4.22l1.42 1.42','M18.36 18.36l1.42 1.42','M1 12h2','M21 12h2','M4.22 19.78l1.42-1.42','M18.36 5.64l1.42-1.42','M12 5a7 7 0 1 0 0 14A7 7 0 0 0 12 5z']} />;
+    const X            = p => <Ico {...p} paths={['M18 6L6 18','M6 6l12 12']} />;
+    const Sliders      = p => <Ico {...p} paths={['M4 21v-7','M4 10V3','M12 21v-9','M12 8V3','M20 21v-5','M20 12V3','M1 14h6','M9 8h6','M17 16h6']} />;
+    const TrendingUp   = p => <Ico {...p} paths={['M23 6l-9.5 9.5-5-5L1 18','M17 6h6v6']} />;
+    const BrainCircuit = p => <Ico {...p} paths={['M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z','M9 13a4.5 4.5 0 0 0 3-4','M6.003 5.125A3 3 0 0 0 6.401 6.5','M3.477 10.896a4 4 0 0 1 .585-.396','M6 18a4 4 0 0 1-1.967-.516','M12 13h4','M12 18h6a2 2 0 0 1 2 2v1','M12 8h8','M16 8V5a2 2 0 0 1 2-2','M16 13v-1a2 2 0 0 1 2-2h2']} />;
+
+    // ================================================================
+    // STORAGE  (localStorage — auto-saves per boardId)
+    // ================================================================
+    const loadBoard = (bId) => {
+      try { return JSON.parse(localStorage.getItem(`aiboard_${bId}`) || '[]'); }
+      catch { return []; }
+    };
+    const saveBoard = (bId, els) => {
+      try { localStorage.setItem(`aiboard_${bId}`, JSON.stringify(els)); }
+      catch(e) { console.warn('Storage error:', e); }
+    };
+
+    // ================================================================
+    // GEMINI API  (free tier — aistudio.google.com)
+    // ================================================================
+    const callGemini = async (userText, systemText, apiKey, jsonMode = false) => {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+      const body = {
+        contents: [{ parts: [{ text: userText }] }],
+        systemInstruction: { parts: [{ text: systemText }] }
+      };
+      if (jsonMode) {
+        body.generationConfig = { responseMimeType: 'application/json' };
+      }
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `Gemini API error ${res.status}`);
+      }
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (jsonMode) {
+        try {
+          const clean = text.replace(/```json|```/g, '').trim();
+          return JSON.parse(clean);
+        } catch { throw new Error('Could not parse JSON from Gemini response.'); }
+      }
+      return text;
+    };
+
+    // ================================================================
+    // MAIN APP
+    // ================================================================
+    function App() {
+      const [boardId, setBoardId]             = useState('');
+      const [elements, setElements]           = useState([]);
+      const [activeTool, setActiveTool]       = useState('select');
+      const [zoom, setZoom]                   = useState(1);
+      const [panOffset, setPanOffset]         = useState({ x: 0, y: 0 });
+      const [isDarkMode, setIsDarkMode]       = useState(true);
+      const [isPanelOpen, setIsPanelOpen]     = useState(true);
+
+      const [selectedId, setSelectedId]       = useState(null);
+      const [action, setAction]               = useState('none');
+      const [strokeColor, setStrokeColor]     = useState('#a855f7');
+      const [strokeWidth, setStrokeWidth]     = useState(3);
+      const [fillColor, setFillColor]         = useState('transparent');
+      const [fontSize]                        = useState(18);
+      const [newElement, setNewElement]       = useState(null);
+      const [textInput, setTextInput]         = useState({ id: null, x: 0, y: 0, text: '' });
+
+      // drag/pan refs — use refs to avoid stale closures in passive listeners
+      const dragStart         = useRef({ x: 0, y: 0 });
+      const startPanOffset    = useRef({ x: 0, y: 0 });
+      const elStartCoords     = useRef({ x: 0, y: 0, width: 0, height: 0 });
+      const actionRef         = useRef('none');
+      const selectedIdRef     = useRef(null);
+      const elementsRef       = useRef([]);
+      const newElementRef     = useRef(null);
+      const activeToolRef     = useRef('select');
+      const zoomRef           = useRef(1);
+      const panOffsetRef      = useRef({ x: 0, y: 0 });
+      const strokeColorRef    = useRef('#a855f7');
+      const strokeWidthRef    = useRef(3);
+      const fillColorRef      = useRef('transparent');
+
+      // keep refs in sync with state
+      useEffect(() => { actionRef.current      = action; },      [action]);
+      useEffect(() => { selectedIdRef.current  = selectedId; },  [selectedId]);
+      useEffect(() => { elementsRef.current    = elements; },     [elements]);
+      useEffect(() => { newElementRef.current  = newElement; },   [newElement]);
+      useEffect(() => { activeToolRef.current  = activeTool; },   [activeTool]);
+      useEffect(() => { zoomRef.current        = zoom; },         [zoom]);
+      useEffect(() => { panOffsetRef.current   = panOffset; },    [panOffset]);
+      useEffect(() => { strokeColorRef.current = strokeColor; },  [strokeColor]);
+      useEffect(() => { strokeWidthRef.current = strokeWidth; },  [strokeWidth]);
+      useEffect(() => { fillColorRef.current   = fillColor; },    [fillColor]);
+
+      const [copiedLink, setCopiedLink]       = useState(false);
+      const [notification, setNotification]   = useState(null);
+      const [aiPanelTab, setAiPanelTab]       = useState(null);
+      const [aiTopic, setAiTopic]             = useState('');
+      const [aiAnalysis, setAiAnalysis]       = useState('');
+      const [isAiLoading, setIsAiLoading]     = useState(false);
+      const [apiKey, setApiKey]               = useState(
+        HARDCODED_API_KEY || localStorage.getItem('aiboard_apikey') || ''
+      );
+      const [apiKeyDraft, setApiKeyDraft]     = useState('');
+      const [showApiModal, setShowApiModal]   = useState(false);
+
+      const canvasRef     = useRef(null);
+      const boardIdRef    = useRef('');
+
+      // ── notifications ──
+      const showNotify = useCallback((msg, type = 'success') => setNotification({ msg, type }), []);
+      useEffect(() => {
+        if (!notification) return;
+        const t = setTimeout(() => setNotification(null), 3500);
+        return () => clearTimeout(t);
+      }, [notification]);
+
+      // ── init board ──
+      useEffect(() => {
+        const hash = window.location.hash;
+        let bId = hash.startsWith('#board=') ? hash.replace('#board=', '') : Math.random().toString(36).slice(2, 10);
+        if (!hash.startsWith('#board=')) window.location.hash = `#board=${bId}`;
+        setBoardId(bId);
+        boardIdRef.current = bId;
+        const saved = loadBoard(bId);
+        setElements(saved);
+        elementsRef.current = saved;
+      }, []);
+
+      // ── sync to storage ──
+      const syncElements = useCallback((els) => {
+        if (boardIdRef.current) saveBoard(boardIdRef.current, els);
+      }, []);
+
+      // ── draw loop ──
+      const drawCanvas = useCallback(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const { x: px, y: py } = panOffsetRef.current;
+        const z = zoomRef.current;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.scale(z, z);
+        // grid
+        ctx.strokeStyle = isDarkMode ? '#1e293b' : '#f1f5f9';
+        ctx.lineWidth = 1;
+        const gs = 30;
+        const sx = Math.floor(-px / z / gs) * gs - gs, ex = sx + canvas.width / z + gs * 2;
+        const sy = Math.floor(-py / z / gs) * gs - gs, ey = sy + canvas.height / z + gs * 2;
+        for (let x = sx; x < ex; x += gs) { ctx.beginPath(); ctx.moveTo(x, sy); ctx.lineTo(x, ey); ctx.stroke(); }
+        for (let y = sy; y < ey; y += gs) { ctx.beginPath(); ctx.moveTo(sx, y); ctx.lineTo(ex, y); ctx.stroke(); }
+        // elements
+        elementsRef.current.forEach(el => renderEl(ctx, el));
+        if (newElementRef.current) renderEl(ctx, newElementRef.current);
+        // selection
+        if (selectedIdRef.current) {
+          const sel = elementsRef.current.find(e => e.id === selectedIdRef.current);
+          if (sel) {
+            ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 3]);
+            const off = 6;
+            ctx.strokeRect(sel.x - off, sel.y - off, sel.width + off*2, sel.height + off*2);
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#3b82f6';
+            ctx.beginPath();
+            ctx.arc(sel.x + sel.width + off, sel.y + sel.height + off, 6, 0, 2*Math.PI);
+            ctx.fill();
+          }
+        }
+        ctx.restore();
+      }, [isDarkMode]);
+
+      const renderEl = (ctx, el) => {
+        ctx.strokeStyle = el.strokeColor || '#a855f7';
+        ctx.fillStyle   = el.fillColor   || 'transparent';
+        ctx.lineWidth   = el.strokeWidth || 3;
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        switch (el.type) {
+          case 'pencil':
+            if (el.points?.length > 1) {
+              ctx.beginPath(); ctx.moveTo(el.points[0].x, el.points[0].y);
+              el.points.slice(1).forEach(pt => ctx.lineTo(pt.x, pt.y)); ctx.stroke();
+            }
+            break;
+          case 'rectangle':
+            ctx.beginPath(); ctx.rect(el.x, el.y, el.width, el.height);
+            if (el.fillColor !== 'transparent') ctx.fill(); ctx.stroke();
+            break;
+          case 'circle': {
+            const rx = el.width/2, ry = el.height/2;
+            ctx.beginPath(); ctx.ellipse(el.x+rx, el.y+ry, Math.abs(rx), Math.abs(ry), 0, 0, 2*Math.PI);
+            if (el.fillColor !== 'transparent') ctx.fill(); ctx.stroke(); break;
+          }
+          case 'line':
+            ctx.beginPath(); ctx.moveTo(el.x, el.y); ctx.lineTo(el.x+el.width, el.y+el.height); ctx.stroke(); break;
+          case 'arrow': {
+            const tx = el.x+el.width, ty = el.y+el.height;
+            ctx.beginPath(); ctx.moveTo(el.x, el.y); ctx.lineTo(tx, ty); ctx.stroke();
+            const ang = Math.atan2(ty-el.y, tx-el.x), hl = 12;
+            ctx.beginPath();
+            ctx.moveTo(tx, ty); ctx.lineTo(tx - hl*Math.cos(ang-Math.PI/6), ty - hl*Math.sin(ang-Math.PI/6));
+            ctx.moveTo(tx, ty); ctx.lineTo(tx - hl*Math.cos(ang+Math.PI/6), ty - hl*Math.sin(ang+Math.PI/6));
+            ctx.stroke(); break;
+          }
+          case 'text':
+            ctx.font = `${el.fontSize||18}px sans-serif`;
+            ctx.fillStyle = el.strokeColor; ctx.textBaseline = 'top';
+            (el.text||'').split('\n').forEach((ln, i) => ctx.fillText(ln, el.x, el.y + i*(el.fontSize||18)*1.2));
+            break;
+          case 'sticky': {
+            ctx.fillStyle = el.fillColor === 'transparent' ? '#fef08a' : el.fillColor;
+            ctx.beginPath();
+            if (ctx.roundRect) ctx.roundRect(el.x, el.y, el.width, el.height, 8);
+            else ctx.rect(el.x, el.y, el.width, el.height);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(0,0,0,0.12)'; ctx.lineWidth = 1; ctx.stroke();
+            ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#1e293b'; ctx.textBaseline = 'top';
+            wrapText(ctx, el.text||'', el.x+12, el.y+12, el.width-24, 20); break;
+          }
+          case 'image':
+            if (el.imageUrl) {
+              const img = new Image(); img.src = el.imageUrl;
+              if (img.complete) ctx.drawImage(img, el.x, el.y, el.width, el.height);
+              else { img.onload = () => drawCanvas(); ctx.fillStyle='#1e293b'; ctx.fillRect(el.x,el.y,el.width,el.height); }
+            }
+            break;
+        }
+      };
+
+      const wrapText = (ctx, text, x, y, maxW, lh) => {
+        const words = text.split(' '); let line='', cy=y;
+        words.forEach((w,i) => {
+          const t = line+w+' ';
+          if (ctx.measureText(t).width > maxW && i>0) { ctx.fillText(line,x,cy); line=w+' '; cy+=lh; }
+          else line=t;
+        });
+        ctx.fillText(line,x,cy);
+      };
+
+      // ── canvas resize + redraw ──
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const resize = () => {
+          canvas.width  = canvas.parentElement.clientWidth;
+          canvas.height = canvas.parentElement.clientHeight;
+          drawCanvas();
+        };
+        resize();
+        window.addEventListener('resize', resize);
+        return () => window.removeEventListener('resize', resize);
+      }, [drawCanvas]);
+
+      // redraw on state changes
+      useEffect(() => { drawCanvas(); }, [elements, zoom, panOffset, selectedId, newElement, isDarkMode, drawCanvas]);
+
+      // ── coord helpers ──
+      const getCoords = (e) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return { x:0, y:0 };
+        const rect = canvas.getBoundingClientRect();
+        const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+        const cy = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+        const z = zoomRef.current, po = panOffsetRef.current;
+        return { x: (cx - po.x) / z, y: (cy - po.y) / z };
+      };
+
+      const getElAt = (x, y) => {
+        const els = elementsRef.current;
+        for (let i = els.length-1; i >= 0; i--) {
+          const el = els[i];
+          if (el.type === 'pencil') {
+            if (el.points?.some(pt => Math.hypot(pt.x-x, pt.y-y) < 10)) return el;
+          } else {
+            const mnX=Math.min(el.x,el.x+el.width), mxX=Math.max(el.x,el.x+el.width);
+            const mnY=Math.min(el.y,el.y+el.height), mxY=Math.max(el.y,el.y+el.height);
+            if (x>=mnX-5 && x<=mxX+5 && y>=mnY-5 && y<=mxY+5) return el;
+          }
+        }
+        return null;
+      };
+
+      const onResizeHandle = (x, y, el) => {
+        const off=6;
+        return Math.hypot((el.x+el.width+off)-x, (el.y+el.height+off)-y) < 12;
+      };
+
+      // ── attach canvas events via useEffect (non-passive, so we can preventDefault) ──
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const onDown = (e) => {
+          if (e.type === 'touchstart') e.preventDefault();
+
+          // don't intercept text textarea clicks
+          if (e.target !== canvas) return;
+
+          const { x, y } = getCoords(e);
+          const tool = activeToolRef.current;
+
+          if (tool === 'select') {
+            const clicked = getElAt(x, y);
+            if (clicked) {
+              setSelectedId(clicked.id); selectedIdRef.current = clicked.id;
+              setStrokeColor(clicked.strokeColor||'#a855f7');
+              setFillColor(clicked.fillColor||'transparent');
+              setStrokeWidth(clicked.strokeWidth||3);
+              const mode = onResizeHandle(x, y, clicked) ? 'resizing' : 'moving';
+              actionRef.current = mode; setAction(mode);
+              dragStart.current = { x, y };
+              elStartCoords.current = { x:clicked.x, y:clicked.y, width:clicked.width, height:clicked.height };
+            } else {
+              setSelectedId(null); selectedIdRef.current = null;
+              actionRef.current = 'none'; setAction('none');
+            }
+          } else if (tool === 'pan') {
+            actionRef.current = 'panning'; setAction('panning');
+            const cx = e.touches ? e.touches[0].clientX : e.clientX;
+            const cy = e.touches ? e.touches[0].clientY : e.clientY;
+            dragStart.current = { x:cx, y:cy };
+            startPanOffset.current = { ...panOffsetRef.current };
+          } else if (tool === 'eraser') {
+            const target = getElAt(x, y);
+            if (target) {
+              const updated = elementsRef.current.filter(el => el.id !== target.id);
+              setElements(updated); elementsRef.current = updated; syncElements(updated);
+            }
+          } else {
+            actionRef.current = 'drawing'; setAction('drawing');
+            const id = Math.random().toString(36).slice(2,10);
+            const el = {
+              id, type: tool, x, y, width: 0, height: 0,
+              strokeColor: strokeColorRef.current,
+              strokeWidth: strokeWidthRef.current,
+              fillColor:   fillColorRef.current,
+              fontSize: 18,
+              points: tool === 'pencil' ? [{ x, y }] : [],
+              text: tool === 'sticky' ? 'Write your idea…' : ''
+            };
+            newElementRef.current = el; setNewElement(el);
+          }
+        };
+
+        const onMove = (e) => {
+          if (e.type === 'touchmove') e.preventDefault();
+          const act = actionRef.current;
+          if (act === 'none') return;
+
+          const { x, y } = getCoords(e);
+
+          if (act === 'panning') {
+            const cx = e.touches ? e.touches[0].clientX : e.clientX;
+            const cy = e.touches ? e.touches[0].clientY : e.clientY;
+            const po = {
+              x: startPanOffset.current.x + (cx - dragStart.current.x),
+              y: startPanOffset.current.y + (cy - dragStart.current.y)
+            };
+            panOffsetRef.current = po; setPanOffset(po); return;
+          }
+
+          if (act === 'moving' && selectedIdRef.current) {
+            const dx = x - dragStart.current.x, dy = y - dragStart.current.y;
+            const updated = elementsRef.current.map(el =>
+              el.id === selectedIdRef.current
+                ? { ...el, x: elStartCoords.current.x+dx, y: elStartCoords.current.y+dy }
+                : el
+            );
+            elementsRef.current = updated; setElements(updated); return;
+          }
+
+          if (act === 'resizing' && selectedIdRef.current) {
+            const dx = x - dragStart.current.x, dy = y - dragStart.current.y;
+            const updated = elementsRef.current.map(el =>
+              el.id === selectedIdRef.current
+                ? { ...el, width: Math.max(10, elStartCoords.current.width+dx), height: Math.max(10, elStartCoords.current.height+dy) }
+                : el
+            );
+            elementsRef.current = updated; setElements(updated); return;
+          }
+
+          if (act === 'drawing' && newElementRef.current) {
+            const el = newElementRef.current;
+            const updated = activeToolRef.current === 'pencil'
+              ? { ...el, points: [...el.points, { x, y }] }
+              : { ...el, width: x-el.x, height: y-el.y };
+            newElementRef.current = updated; setNewElement({ ...updated });
+          }
+        };
+
+        const onUp = (e) => {
+          if (e.type === 'touchend') e.preventDefault();
+          const act = actionRef.current;
+          if (act === 'panning') { actionRef.current='none'; setAction('none'); return; }
+
+          if (act === 'moving' || act === 'resizing') {
+            actionRef.current='none'; setAction('none');
+            syncElements(elementsRef.current); return;
+          }
+
+          if (act === 'drawing' && newElementRef.current) {
+            const el = newElementRef.current;
+            const tool = activeToolRef.current;
+
+            if (tool !== 'pencil' && Math.abs(el.width)<5 && Math.abs(el.height)<5
+                && tool !== 'text' && tool !== 'sticky') {
+              newElementRef.current=null; setNewElement(null);
+              actionRef.current='none'; setAction('none'); return;
+            }
+
+            if (tool === 'text') {
+              setTextInput({ id: el.id, x: el.x, y: el.y, text: '' });
+              newElementRef.current=null; setNewElement(null);
+              actionRef.current='none'; setAction('none'); return;
+            }
+
+            let finalEl = { ...el };
+            if (!['pencil','line','arrow'].includes(tool)) {
+              if (finalEl.width  < 0) { finalEl.x += finalEl.width;  finalEl.width  = Math.abs(finalEl.width);  }
+              if (finalEl.height < 0) { finalEl.y += finalEl.height; finalEl.height = Math.abs(finalEl.height); }
+            }
+            if (tool === 'sticky') {
+              finalEl.width=160; finalEl.height=160;
+              finalEl.text='Write your idea…'; finalEl.fillColor='#fef08a';
+            }
+            const updated = [...elementsRef.current, finalEl];
+            setElements(updated); elementsRef.current=updated; syncElements(updated);
+            newElementRef.current=null; setNewElement(null);
+            actionRef.current='none'; setAction('none');
+          }
+        };
+
+        const onDblClick = (e) => {
+          const { x, y } = getCoords(e);
+          const target = getElAt(x, y);
+          if (target && (target.type==='text' || target.type==='sticky')) {
+            setTextInput({ id: target.id, x: target.x, y: target.y, text: target.text });
+          }
+        };
+
+        const onWheel = (e) => {
+          e.preventDefault();
+          const delta = e.deltaY > 0 ? 0.9 : 1.1;
+          const canvas = canvasRef.current;
+          const rect = canvas.getBoundingClientRect();
+          const mx = e.clientX - rect.left;
+          const my = e.clientY - rect.top;
+          const po = panOffsetRef.current;
+          const z  = zoomRef.current;
+          const newZoom = Math.min(4, Math.max(0.2, +(z * delta).toFixed(2)));
+          const newPan  = {
+            x: mx - (mx - po.x) * (newZoom / z),
+            y: my - (my - po.y) * (newZoom / z)
+          };
+          zoomRef.current = newZoom; setZoom(newZoom);
+          panOffsetRef.current = newPan; setPanOffset(newPan);
+        };
+
+        canvas.addEventListener('mousedown',  onDown,    { passive: false });
+        canvas.addEventListener('mousemove',  onMove,    { passive: false });
+        canvas.addEventListener('mouseup',    onUp,      { passive: false });
+        canvas.addEventListener('touchstart', onDown,    { passive: false });
+        canvas.addEventListener('touchmove',  onMove,    { passive: false });
+        canvas.addEventListener('touchend',   onUp,      { passive: false });
+        canvas.addEventListener('dblclick',   onDblClick);
+        canvas.addEventListener('wheel',      onWheel,   { passive: false });
+
+        return () => {
+          canvas.removeEventListener('mousedown',  onDown);
+          canvas.removeEventListener('mousemove',  onMove);
+          canvas.removeEventListener('mouseup',    onUp);
+          canvas.removeEventListener('touchstart', onDown);
+          canvas.removeEventListener('touchmove',  onMove);
+          canvas.removeEventListener('touchend',   onUp);
+          canvas.removeEventListener('dblclick',   onDblClick);
+          canvas.removeEventListener('wheel',      onWheel);
+        };
+      }, [syncElements, drawCanvas]);
+
+      const finalizeTextInput = () => {
+        if (!textInput.id) return;
+        let updated;
+        const exists = elementsRef.current.some(el => el.id === textInput.id);
+        if (exists) {
+          updated = textInput.text.trim()===''
+            ? elementsRef.current.filter(el => el.id !== textInput.id)
+            : elementsRef.current.map(el => el.id===textInput.id ? { ...el, text: textInput.text } : el);
+        } else {
+          updated = textInput.text.trim()===''
+            ? [...elementsRef.current]
+            : [...elementsRef.current, {
+                id: textInput.id, type:'text', x: textInput.x, y: textInput.y,
+                width: textInput.text.length*10, height: fontSize*1.5,
+                text: textInput.text, strokeColor, strokeWidth, fontSize
+              }];
+        }
+        setElements(updated); elementsRef.current=updated; syncElements(updated);
+        setTextInput({ id:null, x:0, y:0, text:'' });
+      };
+
+      // ── style controls ──
+      const updateStyle = (type, val) => {
+        if (type==='strokeColor') {
+          setStrokeColor(val); strokeColorRef.current=val;
+          if (selectedIdRef.current) {
+            const up = elementsRef.current.map(e => e.id===selectedIdRef.current ? { ...e, strokeColor:val } : e);
+            setElements(up); elementsRef.current=up; syncElements(up);
+          }
+        } else if (type==='fillColor') {
+          setFillColor(val); fillColorRef.current=val;
+          if (selectedIdRef.current) {
+            const up = elementsRef.current.map(e => e.id===selectedIdRef.current ? { ...e, fillColor:val } : e);
+            setElements(up); elementsRef.current=up; syncElements(up);
+          }
+        } else if (type==='strokeWidth') {
+          setStrokeWidth(val); strokeWidthRef.current=val;
+          if (selectedIdRef.current) {
+            const up = elementsRef.current.map(e => e.id===selectedIdRef.current ? { ...e, strokeWidth:val } : e);
+            setElements(up); elementsRef.current=up; syncElements(up);
+          }
+        }
+      };
+
+      const deleteSelected = () => {
+        if (!selectedIdRef.current) return;
+        const up = elementsRef.current.filter(el => el.id !== selectedIdRef.current);
+        setElements(up); elementsRef.current=up; syncElements(up);
+        setSelectedId(null); selectedIdRef.current=null;
+      };
+
+      const clearBoard = () => {
+        if (!window.confirm('Clear entire board?')) return;
+        setElements([]); elementsRef.current=[]; syncElements([]);
+        setSelectedId(null); selectedIdRef.current=null;
+        showNotify('Board cleared!');
+      };
+
+      const zoomIn    = () => { const v=Math.min(4, +(zoomRef.current+0.1).toFixed(1)); zoomRef.current=v; setZoom(v); };
+      const zoomOut   = () => { const v=Math.max(0.2, +(zoomRef.current-0.1).toFixed(1)); zoomRef.current=v; setZoom(v); };
+      const zoomReset = () => { zoomRef.current=1; setZoom(1); panOffsetRef.current={x:0,y:0}; setPanOffset({x:0,y:0}); };
+
+      const copyLink = () => {
+        const link = `${window.location.origin}${window.location.pathname}#board=${boardId}`;
+        if (navigator.clipboard) navigator.clipboard.writeText(link);
+        else { const el=document.createElement('input'); el.value=link; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); }
+        setCopiedLink(true); showNotify('Board link copied!');
+        setTimeout(() => setCopiedLink(false), 2500);
+      };
+
+      const exportPNG = () => {
+        const canvas = canvasRef.current; if (!canvas) return;
+        const ec = document.createElement('canvas'); ec.width=canvas.width; ec.height=canvas.height;
+        const ctx = ec.getContext('2d');
+        ctx.fillStyle = isDarkMode ? '#0f172a' : '#ffffff'; ctx.fillRect(0,0,ec.width,ec.height);
+        ctx.save(); ctx.translate(panOffsetRef.current.x, panOffsetRef.current.y); ctx.scale(zoomRef.current, zoomRef.current);
+        elementsRef.current.forEach(el => renderEl(ctx,el)); ctx.restore();
+        const a=document.createElement('a'); a.href=ec.toDataURL('image/png'); a.download=`board-${boardId}.png`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        showNotify('Exported as PNG!');
+      };
+
+      // ── AI ──
+      const ensureKey = (cb) => { if (apiKey.trim()) cb(); else setShowApiModal(true); };
+
+      const saveApiKey = () => {
+        if (!apiKeyDraft.trim()) return;
+        const k = apiKeyDraft.trim(); setApiKey(k); localStorage.setItem('aiboard_apikey', k);
+        setApiKeyDraft(''); setShowApiModal(false); showNotify('API key saved!');
+      };
+
+      const aiBrainstorm = async () => {
+        if (!aiTopic.trim()) { showNotify('Enter a topic first.','error'); return; }
+        ensureKey(async () => {
+          setIsAiLoading(true); showNotify('Generating ideas…','info');
+          try {
+            const sys = `You are a design architect. Generate exactly 5 sticky note ideas for a whiteboard canvas.
+Return ONLY valid JSON: {"stickies":[{"text":"...","color":"#hex","x":number,"y":number}]}
+Use varied positions (x:100-800, y:100-500). Colors: #fef08a #fca5a5 #86efac #93c5fd #c084fc #fed7aa`;
+            const result = await callGemini(`Topic: ${aiTopic}`, sys, apiKey, true);
+            if (result?.stickies?.length) {
+              const generated = result.stickies.map(s => ({
+                id: Math.random().toString(36).slice(2,10),
+                type:'sticky', x:s.x||200, y:s.y||200, width:160, height:160,
+                text:s.text, fillColor:s.color||'#fef08a',
+                strokeColor:'#00000020', strokeWidth:1
+              }));
+              const up = [...elementsRef.current, ...generated];
+              setElements(up); elementsRef.current=up; syncElements(up);
+              showNotify('Ideas added to canvas!'); setAiTopic('');
+            }
+          } catch(err) { showNotify(err.message||'Gemini error. Check API key.','error'); }
+          finally { setIsAiLoading(false); }
+        });
+      };
+
+      const aiAnalyze = async () => {
+        ensureKey(async () => {
+          setIsAiLoading(true); showNotify('Analysing board…','info');
+          const nodes = elementsRef.current
+            .filter(e=>e.type==='text'||e.type==='sticky')
+            .map(e=>`[${e.type}]: "${e.text}" at (${Math.round(e.x)},${Math.round(e.y)})`).join('\n');
+          try {
+            const result = await callGemini(
+              `Board has ${elementsRef.current.length} elements.\n${nodes||'No text nodes.'}`,
+              'You are a design thinking advisor. Summarise the whiteboard and give 3 concise action points. Max 120 words.',
+              apiKey
+            );
+            setAiAnalysis(result);
+          } catch(err) { showNotify(err.message||'Analysis failed.','error'); }
+          finally { setIsAiLoading(false); }
+        });
+      };
+
+      // ── UI helpers ──
+      const dm   = isDarkMode;
+      const card = dm ? 'bg-slate-950/50 border-slate-800' : 'bg-slate-50 border-slate-100';
+      const inp  = dm ? 'bg-slate-900 border-slate-800 text-white placeholder-slate-500'
+                      : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400';
+      const btnQ = dm ? 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-black';
+
+      const tools = [
+        { id:'select',    icon:<MousePointer size={15}/>, label:'Select' },
+        { id:'pan',       icon:<Hand size={15}/>,         label:'Pan (or scroll wheel)' },
+        { id:'pencil',    icon:<Edit3 size={15}/>,        label:'Freehand' },
+        { id:'rectangle', icon:<Square size={15}/>,       label:'Rectangle' },
+        { id:'circle',    icon:<Circle size={15}/>,       label:'Circle' },
+        { id:'line',      icon:<Minus size={15}/>,        label:'Line' },
+        { id:'arrow',     icon:<ArrowRight size={15}/>,   label:'Arrow' },
+        { id:'text',      icon:<Type size={15}/>,         label:'Text' },
+        { id:'sticky',    icon:<FileText size={15}/>,     label:'Sticky Note' },
+        { id:'eraser',    icon:<Eraser size={15}/>,       label:'Eraser' }
+      ];
+
+      const strokeColors = ['#f87171','#fb923c','#fbbf24','#34d399','#60a5fa','#a78bfa','#f472b6','#ffffff','#000000'];
+      const fillColors   = ['transparent','#fef08a','#fca5a5','#86efac','#93c5fd','#c084fc','#fed7aa'];
+
+      return (
+        <div className={`flex h-screen w-screen overflow-hidden select-none ${dm ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
+
+          {/* NOTIFICATION */}
+          {notification && (
+            <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2 border pointer-events-none ${
+              notification.type==='error' ? 'bg-rose-500/15 border-rose-500/30 text-rose-200'
+              : notification.type==='info' ? 'bg-blue-500/15 border-blue-500/30 text-blue-200'
+              : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200'
+            }`}>
+              <Sparkles size={15}/>
+              <span className="text-sm font-semibold">{notification.msg}</span>
+            </div>
+          )}
+
+          {/* API KEY MODAL */}
+          {showApiModal && (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center" onMouseDown={e=>e.stopPropagation()}>
+              <div className={`w-96 rounded-2xl border p-6 shadow-2xl ${dm ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <h2 className="text-lg font-bold mb-1">Gemini API Key</h2>
+                <p className="text-xs text-slate-400 mb-4">
+                  Get a <strong>free</strong> key at{' '}
+                  <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" className="text-purple-400 underline">aistudio.google.com</a>.
+                  Stored in your browser only.
+                </p>
+                <input type="password" value={apiKeyDraft} onChange={e=>setApiKeyDraft(e.target.value)}
+                  onKeyDown={e=>e.key==='Enter'&&saveApiKey()}
+                  placeholder="AIza..."
+                  className={`w-full text-sm p-2.5 rounded-lg border outline-none mb-4 ${inp}`} autoFocus />
+                <div className="flex gap-2">
+                  <button onClick={saveApiKey}
+                    className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-sm font-semibold py-2 rounded-lg">
+                    Save & Continue
+                  </button>
+                  <button onClick={()=>setShowApiModal(false)}
+                    className={`px-4 py-2 rounded-lg border text-sm ${dm?'border-slate-700 text-slate-400':'border-slate-200 text-slate-500'}`}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SIDE PANEL */}
+          <aside style={{ flexShrink:0, width: isPanelOpen ? 300 : 0, transition:'width 0.3s', overflow:'hidden' }}
+            className={`h-full border-r flex flex-col z-20 shadow-lg relative ${dm?'bg-slate-900 border-slate-800':'bg-white border-slate-200'}`}>
+
+            {/* Toggle tab */}
+            <button onClick={()=>setIsPanelOpen(v=>!v)}
+              style={{ position:'absolute', right: isPanelOpen ? -32 : -32, top:'50%', transform:'translateY(-50%)', zIndex:30 }}
+              className={`h-20 w-8 flex items-center justify-center rounded-r-lg border ${dm?'bg-slate-900 border-slate-800 text-slate-400 hover:text-white':'bg-white border-slate-200 text-slate-500 hover:text-black'}`}>
+              <span className="text-xs font-bold" style={{writingMode:'vertical-rl'}}>{isPanelOpen?'◀':'▶'}</span>
+            </button>
+
+            {/* Brand */}
+            <div className="p-4 border-b flex items-center justify-between border-inherit flex-shrink-0" style={{minWidth:300}}>
+              <div className="flex items-center gap-2">
+                <div className="bg-gradient-to-tr from-purple-600 to-indigo-600 p-2 rounded-xl text-white"><BrainCircuit size={22}/></div>
+                <div>
+                  <h1 className="text-base font-bold bg-gradient-to-r from-purple-400 to-indigo-400 bg-clip-text text-transparent">GeminiBoard</h1>
+                  <p className="text-[10px] text-slate-400">AI-Powered Whiteboard</p>
+                </div>
+              </div>
+              <button onClick={()=>setIsDarkMode(v=>!v)} className={`p-1.5 rounded-lg ${dm?'hover:bg-slate-800 text-slate-300':'hover:bg-slate-100 text-slate-600'}`}>
+                {dm ? <Sun size={16}/> : <Moon size={16}/>}
+              </button>
+            </div>
+
+            {/* Scrollable content */}
+            <div className="p-4 space-y-4 flex-1 overflow-y-auto" style={{minWidth:300}}>
+
+              {/* Board */}
+              <div className={`p-3.5 rounded-xl border ${card}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Users size={11} className="text-indigo-400"/> Board
+                  </h2>
+                  <span className="text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 bg-emerald-500 rounded-full animate-pulse inline-block"></span> Auto-saved
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mb-3">Board saves to your browser. Share the link to reopen the same board.</p>
+                <div className="flex gap-2">
+                  <button onClick={copyLink}
+                    className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold py-2 px-3 rounded-lg transition-all shadow">
+                    {copiedLink ? <Check size={13}/> : <Share2 size={13}/>}
+                    {copiedLink ? 'Copied!' : 'Share Link'}
+                  </button>
+                  <button onClick={exportPNG} title="Export as PNG"
+                    className={`p-2 rounded-lg border flex items-center justify-center ${dm?'border-slate-800 bg-slate-900 hover:bg-slate-800 text-slate-300':'border-slate-200 bg-white hover:bg-slate-100 text-slate-600'}`}>
+                    <Download size={15}/>
+                  </button>
+                </div>
+              </div>
+
+              {/* AI */}
+              <div className={`p-3.5 rounded-xl border ${card}`}>
+                <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <Sparkles size={13} className="text-purple-400"/> AI Tools (Gemini)
+                </h2>
+                <div className="grid grid-cols-2 gap-1.5 mb-2">
+                  {['brainstorm','analyze'].map(tab=>(
+                    <button key={tab} onClick={()=>setAiPanelTab(aiPanelTab===tab?null:tab)}
+                      className={`text-xs py-2 px-2 rounded-lg flex items-center justify-center gap-1.5 font-medium transition-colors ${
+                        aiPanelTab===tab ? 'bg-purple-600 text-white'
+                        : dm ? 'bg-slate-900 hover:bg-slate-800 text-slate-300' : 'bg-white hover:bg-slate-100 text-slate-700'
+                      }`}>
+                      {tab==='brainstorm' ? <><BrainCircuit size={13}/> Brainstorm</> : <><TrendingUp size={13}/> Analyse</>}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={()=>{setApiKeyDraft(apiKey); setShowApiModal(true);}}
+                  className={`w-full text-[10px] py-1.5 rounded-lg border flex items-center justify-center gap-1 mb-2 ${
+                    apiKey ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
+                    : 'border-rose-500/30 text-rose-400 bg-rose-500/10'
+                  }`}>
+                  {apiKey ? '✓ Gemini Key Set' : '⚠ Set Free Gemini Key'}
+                </button>
+
+                {aiPanelTab==='brainstorm' && (
+                  <div className="space-y-2 pt-2 border-t border-slate-800">
+                    <label className="text-[10px] text-slate-400 uppercase font-semibold block">Topic</label>
+                    <textarea value={aiTopic} onChange={e=>setAiTopic(e.target.value)}
+                      placeholder="e.g. User onboarding flow for a mobile app…"
+                      className={`w-full text-xs p-2 rounded-lg border outline-none h-20 resize-none ${inp}`}/>
+                    <button disabled={isAiLoading} onClick={aiBrainstorm}
+                      className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 disabled:opacity-60 text-white text-xs font-semibold py-2 rounded-lg flex items-center justify-center gap-1">
+                      {isAiLoading
+                        ? <span className="h-3 w-3 border-2 border-white border-t-transparent rounded-full animate-spin inline-block"/>
+                        : <Sparkles size={13}/>}
+                      Generate Stickies
+                    </button>
+                  </div>
+                )}
+
+                {aiPanelTab==='analyze' && (
+                  <div className="space-y-2 pt-2 border-t border-slate-800">
+                    <p className="text-[11px] text-slate-400">Gemini reads your text/sticky nodes and gives insights.</p>
+                    {aiAnalysis && (
+                      <div className={`p-2.5 rounded-lg text-xs max-h-44 overflow-y-auto border leading-relaxed ${dm?'bg-slate-900 border-slate-800 text-slate-300':'bg-white border-slate-200 text-slate-700'}`}>
+                        {aiAnalysis}
+                      </div>
+                    )}
+                    <button disabled={isAiLoading} onClick={aiAnalyze}
+                      className={`w-full text-xs font-semibold py-2 rounded-lg border flex items-center justify-center gap-1.5 disabled:opacity-60 ${
+                        dm ? 'border-indigo-500/30 hover:border-indigo-500 bg-slate-900 text-indigo-300'
+                        : 'border-indigo-200 hover:border-indigo-400 bg-indigo-50/50 text-indigo-600'
+                      }`}>
+                      {isAiLoading
+                        ? <span className="h-3 w-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin inline-block"/>
+                        : <BrainCircuit size={13}/>}
+                      Analyse Board
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Style */}
+              <div className={`p-3.5 rounded-xl border ${card}`}>
+                <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                  <Sliders size={13} className="text-purple-400"/> Style
+                </h2>
+                <div className="space-y-3">
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold block mb-1.5">Stroke</span>
+                    <div className="flex flex-wrap gap-1">
+                      {strokeColors.map(col=>(
+                        <button key={col} onClick={()=>updateStyle('strokeColor',col)}
+                          style={{ backgroundColor:col, border: col==='#ffffff'?'1px solid #475569':'none' }}
+                          className={`h-6 w-6 rounded-full transition-all ${strokeColor===col?'ring-2 ring-indigo-500 scale-110':'opacity-80 hover:opacity-100'}`}/>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-semibold block mb-1.5">Fill</span>
+                    <div className="flex flex-wrap gap-1">
+                      {fillColors.map(col=>(
+                        <button key={col} onClick={()=>updateStyle('fillColor',col)}
+                          style={{ backgroundColor:col==='transparent'?'transparent':col, border:'1px solid #475569' }}
+                          className={`h-6 w-6 rounded-full transition-all flex items-center justify-center ${fillColor===col?'ring-2 ring-indigo-500 scale-110':'opacity-80 hover:opacity-100'}`}>
+                          {col==='transparent'&&<span className="text-[9px] text-slate-400">✕</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-[10px] text-slate-400 uppercase font-semibold mb-1">
+                      <span>Thickness</span><span>{strokeWidth}px</span>
+                    </div>
+                    <input type="range" min="1" max="12" value={strokeWidth}
+                      onChange={e=>updateStyle('strokeWidth',parseInt(e.target.value))}/>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Clear */}
+            <div className="p-4 border-t border-inherit flex-shrink-0" style={{minWidth:300}}>
+              <button onClick={clearBoard}
+                className="w-full bg-rose-600/10 hover:bg-rose-600/20 text-rose-400 border border-rose-500/20 text-xs font-semibold py-2 rounded-lg flex items-center justify-center gap-1.5 transition-colors">
+                <Trash2 size={15}/> Clear Canvas
+              </button>
+            </div>
+          </aside>
+
+          {/* CANVAS AREA */}
+          <main className="flex-1 flex flex-col relative overflow-hidden" style={{minWidth:0}}>
+
+            {/* Floating toolbar */}
+            <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 px-2.5 py-1.5 rounded-2xl border shadow-2xl ${
+              dm ? 'bg-slate-900/95 border-slate-800' : 'bg-white/95 border-slate-200'
+            }`}>
+              <span className="flex items-center gap-1 mr-1 text-slate-400 text-[9px] font-bold pr-1 border-r border-slate-700">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse inline-block"></span> LIVE
+              </span>
+              {tools.map(t=>(
+                <button key={t.id} onClick={()=>{ setActiveTool(t.id); activeToolRef.current=t.id; setSelectedId(null); selectedIdRef.current=null; }}
+                  title={t.label}
+                  className={`p-2 rounded-xl transition-all ${activeTool===t.id?'bg-purple-600 text-white shadow':btnQ}`}>
+                  {t.icon}
+                </button>
+              ))}
+            </div>
+
+            {/* Inline text editor overlay */}
+            {textInput.id !== null && (
+              <div style={{
+                position:'absolute',
+                left: textInput.x * zoomRef.current + panOffsetRef.current.x,
+                top:  textInput.y * zoomRef.current + panOffsetRef.current.y,
+                zIndex: 40
+              }}>
+                <textarea autoFocus value={textInput.text}
+                  onChange={e=>setTextInput(v=>({...v, text:e.target.value}))}
+                  onBlur={finalizeTextInput}
+                  onKeyDown={e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); finalizeTextInput(); }}}
+                  placeholder="Type here…"
+                  className={`p-1.5 border border-indigo-500 rounded-lg shadow-xl outline-none text-sm resize-none min-w-[140px] ${
+                    dm?'bg-slate-900 text-white':'bg-white text-black'
+                  }`}/>
+              </div>
+            )}
+
+            {/* Zoom HUD */}
+            <div className="absolute bottom-4 right-4 z-10 flex items-center gap-2">
+              {selectedId && (
+                <button onClick={deleteSelected} title="Delete selected"
+                  className="p-2.5 bg-rose-600/10 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/20 rounded-xl transition-all shadow-xl">
+                  <Trash2 size={15}/>
+                </button>
+              )}
+              <div className={`flex items-center rounded-xl border p-1.5 shadow-2xl gap-1 ${dm?'bg-slate-900/95 border-slate-800':'bg-white/95 border-slate-200'}`}>
+                <button onClick={zoomOut} title="Zoom out" className={`p-1.5 rounded-lg ${dm?'hover:bg-slate-800 text-slate-300':'hover:bg-slate-100 text-slate-600'}`}><ZoomOut size={15}/></button>
+                <span className="text-xs font-mono font-bold px-1.5">{Math.round(zoom*100)}%</span>
+                <button onClick={zoomIn}  title="Zoom in"  className={`p-1.5 rounded-lg ${dm?'hover:bg-slate-800 text-slate-300':'hover:bg-slate-100 text-slate-600'}`}><ZoomIn size={15}/></button>
+                <button onClick={zoomReset} title="Reset view" className={`p-1.5 rounded-lg ${dm?'hover:bg-slate-800 text-slate-300':'hover:bg-slate-100 text-slate-600'}`}><RotateCcw size={15}/></button>
+              </div>
+            </div>
+
+            {/* Hint */}
+            <div className="absolute bottom-4 left-4 z-10 text-[10px] text-slate-600 pointer-events-none">
+              Scroll to zoom · Pan tool or drag to pan · Double-click sticky/text to edit
+            </div>
+
+            {/* Canvas */}
+            <div className="flex-1 w-full h-full" style={{
+              cursor: activeTool==='pan' ? 'grab' : activeTool==='eraser' ? 'cell' : 'crosshair'
+            }}>
+              <canvas ref={canvasRef}
+                className={`w-full h-full block ${dm?'bg-slate-950':'bg-[#fafafa]'}`}/>
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
